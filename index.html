@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Чистая речь</title>
+<meta name="description" content="Счётчик для игры против мата, слов-паразитов и междометий.">
+<meta name="theme-color" content="#F1F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#10111B" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Чистая речь">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234338E0'/%3E%3Cpath d='M4 16h4V8h6v16h6V8h4v8h4' fill='none' stroke='white' stroke-width='2.6' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;700&display=swap">
+<style>
+/* Layout: one phone-first column. Scoreboard → catch pad → today's log → evening draw → week → settings. */
+:root {
+  --bg: #F1F2F7;
+  --surface: #FFFFFF;
+  --ink: #171A2E;
+  --muted: #5D6283;
+  --line: #DCDEEA;
+  --p1: #4338E0;
+  --p1-soft: #E7E5FF;
+  --p2: #BE2F7E;
+  --p2-soft: #FBE4F0;
+  --on-accent: #FFFFFF;
+  --ok: #1F8455;
+  --ok-soft: #DCF2E6;
+  --warn: #A86F07;
+  --warn-soft: #FAEFD2;
+  --bad: #C2372D;
+  --bad-soft: #FBE2DF;
+  --font-display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --font-body: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --r: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10111B; --surface: #1A1C2A; --ink: #ECEDF7; --muted: #9DA1BE; --line: #2D3046;
+    --p1: #938CFF; --p1-soft: #25234A; --p2: #F071B8; --p2-soft: #3A1E31; --on-accent: #10111B;
+    --ok: #52C590; --ok-soft: #163126; --warn: #E8B54C; --warn-soft: #382C13; --bad: #F27A6F; --bad-soft: #3C1C1A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10111B; --surface: #1A1C2A; --ink: #ECEDF7; --muted: #9DA1BE; --line: #2D3046;
+  --p1: #938CFF; --p1-soft: #25234A; --p2: #F071B8; --p2-soft: #3A1E31; --on-accent: #10111B;
+  --ok: #52C590; --ok-soft: #163126; --warn: #E8B54C; --warn-soft: #382C13; --bad: #F27A6F; --bad-soft: #3C1C1A;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.45;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 96px;
+}
+.wrap { max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+h1, h2 { font-family: var(--font-display); margin: 0; text-wrap: balance; }
+h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1rem; font-weight: 500; }
+p { margin: 0; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+:focus-visible { outline: 2px solid var(--p1); outline-offset: 2px; }
+section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.muted { color: var(--muted); }
+.small { font-size: .82rem; }
+
+/* header */
+.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 16px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { width: 46px; height: 26px; color: var(--p1); flex: none; }
+.meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.date { color: var(--muted); font-size: .88rem; }
+.pill { display: inline-flex; align-items: center; gap: 7px; font-size: .78rem; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--muted)); }
+.note { font-size: .86rem; padding: 10px 14px; border-radius: 10px; background: var(--warn-soft); color: var(--ink); }
+
+/* scoreboard */
+.board { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.card {
+  --pc: var(--p1); --pcs: var(--p1-soft);
+  text-align: left; background: var(--surface); border: 2px solid var(--line); border-radius: var(--r);
+  padding: 14px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0;
+  transition: border-color .15s, background-color .15s;
+}
+.card[aria-pressed="true"] { border-color: var(--pc); background: var(--pcs); }
+.name { font-weight: 600; display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; min-width: 0; }
+.name::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--pc); flex: none; }
+.score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.score b { font-family: var(--font-display); font-size: 2.5rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.score span { font-size: .8rem; color: var(--muted); }
+.facts { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.chip { display: inline-flex; align-items: center; font-size: .75rem; font-weight: 600; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; background: var(--bg); color: var(--muted); }
+.t-clean { background: var(--bg); color: var(--ok); }
+.t-light { background: var(--ok-soft); color: var(--ok); }
+.t-medium { background: var(--warn-soft); color: var(--warn); }
+.t-heavy { background: var(--bad-soft); color: var(--bad); }
+
+/* catch pad */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.catch { --pc: var(--p1); --pcs: var(--p1-soft); }
+.catch-head { display: flex; flex-direction: column; gap: 2px; }
+.catch-head h2 span { color: var(--pc); }
+.cats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.cat {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  min-height: 56px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--bg); font-weight: 600; text-align: left; transition: transform .08s;
+}
+.cat .pts { font-family: var(--font-display); font-size: .9rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.cat.mat { background: var(--bad-soft); border-color: transparent; color: var(--bad); }
+.cat.insult { background: var(--bad); border-color: transparent; color: var(--on-accent); }
+.cat.joker { background: transparent; border-style: dashed; color: var(--muted); font-weight: 500; }
+.cat:not(:disabled):active, .word:not(:disabled):active { transform: scale(.96); }
+.sub { font-size: .78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.words { display: flex; flex-wrap: wrap; gap: 8px; }
+.word { padding: 9px 14px; border-radius: 999px; border: 1.5px solid var(--pc); background: transparent; transition: transform .08s, background-color .15s; }
+.word:not(:disabled):hover { background: var(--pcs); }
+.word b { color: var(--pc); margin-left: 6px; font-weight: 600; }
+.other { display: flex; gap: 8px; }
+.field { width: 100%; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
+.btn { padding: 10px 16px; border-radius: 10px; border: none; background: var(--pc, var(--p1)); color: var(--on-accent); font-weight: 600; white-space: nowrap; }
+.btn.danger { background: var(--bad); }
+.legend { font-size: .8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+
+/* today's log */
+.feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.feed li { --pc: var(--p1); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.feed li.empty { display: block; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--r); padding: 18px; text-align: center; }
+.time { color: var(--muted); font-size: .84rem; font-variant-numeric: tabular-nums; }
+.what { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; min-width: 0; }
+.who { font-size: .82rem; font-weight: 600; color: var(--pc); }
+.label { overflow-wrap: anywhere; }
+.flag { font-size: .75rem; color: var(--muted); }
+.plus { font-family: var(--font-display); font-size: .92rem; font-variant-numeric: tabular-nums; }
+.void .label, .void .plus { text-decoration: line-through; opacity: .55; }
+.acts { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.lnk { font-size: .8rem; background: none; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; color: var(--muted); }
+.lnk:not(:disabled):hover { color: var(--ink); border-color: var(--muted); }
+.lnk.danger { color: var(--bad); }
+
+/* evening */
+.sum { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.sumrow { --pc: var(--p1); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sumhead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.draw { border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.draw .dt { font-family: var(--font-display); font-weight: 500; font-size: .95rem; }
+.draw p { color: var(--ink); }
+.drow { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .86rem; }
+.drow label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.draw.done .dt, .draw.done p { text-decoration: line-through; opacity: .6; }
+
+/* week */
+.tablewrap { overflow-x: auto; }
+.week { border-collapse: separate; border-spacing: 4px; width: 100%; min-width: 340px; }
+.week th { font-weight: 500; font-size: .76rem; color: var(--muted); text-align: center; line-height: 1.2; }
+.week th.pn { text-align: left; color: var(--ink); font-weight: 600; font-size: .84rem; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week th.today { color: var(--ink); font-weight: 700; }
+.week td { text-align: center; border-radius: 8px; padding: 8px 0; font-weight: 600; font-variant-numeric: tabular-nums; background: var(--surface); }
+.week td.na { background: transparent; color: var(--line); }
+.stats { display: flex; flex-direction: column; gap: 6px; font-size: .88rem; }
+.stats b { font-weight: 600; }
+
+/* settings */
+.settings summary { font-family: var(--font-display); font-size: 1rem; font-weight: 500; cursor: pointer; }
+.setgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 14px; }
+fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px 14px; margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+legend { font-weight: 600; padding: 0 6px; }
+.fl { display: flex; flex-direction: column; gap: 4px; font-size: .86rem; color: var(--muted); }
+.chk { display: flex; align-items: center; gap: 8px; font-size: .92rem; cursor: pointer; }
+textarea.field { resize: vertical; }
+.reset { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+/* toast */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: max-content; max-width: calc(100% - 32px);
+  display: flex; align-items: center; gap: 12px;
+  background: var(--ink); color: var(--bg); padding: 12px 14px 12px 16px; border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: .9rem; z-index: 20;
+}
+.toast button { background: none; border: 1px solid currentColor; border-radius: 8px; padding: 5px 10px; color: inherit; font-weight: 600; flex: none; }
+
+.invite { font-size: .78rem; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--p1); background: transparent; color: var(--p1); font-weight: 600; }
+.metarow { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.linkbox { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; }
+.linkbox input { font-size: .8rem; }
+
+html { -webkit-text-size-adjust: 100%; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; padding-top: max(20px, env(safe-area-inset-top, 0px)); padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 46 26" aria-hidden="true"><path d="M2 13H8V4H14V22H20V4H26V22H32V13H44" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/></svg>
+      <h1>Чистая речь</h1>
+    </div>
+    <div class="meta">
+      <span class="date" id="today"></span>
+      <div class="metarow">
+        <button class="invite" type="button" id="inviteBtn" hidden>Пригласить</button>
+        <span class="pill" id="status">Подключение…</span>
+      </div>
+    </div>
+  </header>
+
+  <p class="note" id="modeNote" hidden></p>
+
+  <section aria-label="Счёт за сегодня">
+    <div class="board" id="board"></div>
+  </section>
+
+  <section class="panel catch" id="catchPanel" aria-labelledby="catchTitle">
+    <div class="catch-head">
+      <h2 id="catchTitle">Бип! Поймали: <span id="who"></span></h2>
+      <p class="muted small">Сначала нажмите на карточку того, кто оговорился, потом на то, что прозвучало.</p>
+    </div>
+    <div class="cats" id="cats"></div>
+    <div id="wordsBox" class="catch-head" style="gap:10px">
+      <span class="sub">Стоп-лист</span>
+      <div class="words" id="words"></div>
+      <form class="other" id="otherForm" autocomplete="off">
+        <input class="field" id="otherWord" maxlength="40" placeholder="Другое слово-паразит">
+        <button class="btn" type="submit" id="otherBtn">+1</button>
+      </form>
+    </div>
+    <p class="legend">Междометие и паразит +1 · мат +3 · мат в адрес человека +5 · за одну фразу не больше 3 очков. Вечером: 1–4 очка → лёгкий дебафф, 5–9 → средний, 10+ → тяжёлый.</p>
+  </section>
+
+  <section aria-labelledby="feedTitle">
+    <h2 id="feedTitle">Сегодня</h2>
+    <ul class="feed" id="feed"></ul>
+  </section>
+
+  <section aria-labelledby="sumTitle">
+    <h2 id="sumTitle">Итоги дня и дебаффы</h2>
+    <div class="sum" id="summary"></div>
+  </section>
+
+  <section aria-labelledby="weekTitle">
+    <h2 id="weekTitle">Последние 7 дней</h2>
+    <div class="tablewrap"><table class="week" id="week"></table></div>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <details class="panel settings" id="settings">
+    <summary>Настройки игры</summary>
+    <div class="setgrid">
+      <fieldset>
+        <legend>Игрок 1</legend>
+        <label class="fl">Имя <input class="field" id="name_p1" maxlength="40"></label>
+        <label class="fl">Стоп-лист, через запятую <textarea class="field" id="words_p1" rows="3"></textarea></label>
+      </fieldset>
+      <fieldset>
+        <legend>Игрок 2</legend>
+        <label class="fl">Имя <input class="field" id="name_p2" maxlength="40"></label>
+        <label class="fl">Стоп-лист, через запятую <textarea class="field" id="words_p2" rows="3"></textarea></label>
+      </fieldset>
+      <fieldset>
+        <legend>Что ловим</legend>
+        <label class="chk"><input type="checkbox" id="cat_mat"> Мат</label>
+        <label class="chk"><input type="checkbox" id="cat_parasite"> Слова-паразиты</label>
+        <label class="chk"><input type="checkbox" id="cat_filler"> Междометия (э-э, м-м)</label>
+        <p class="muted small">Совет: первую неделю только мат, со второй добавьте паразитов, с третьей междометия.</p>
+      </fieldset>
+      <fieldset>
+        <legend>Копилка</legend>
+        <label class="fl">Рублей за одно очко <input class="field" id="rate" type="number" min="0" step="1" inputmode="numeric"></label>
+        <p class="muted small">0, если играете без денег. Накопленное можно потратить на совместный ужин.</p>
+      </fieldset>
+      <div class="linkbox" id="linkBox" hidden>
+        <label class="fl" for="gameLink">Ссылка на вашу игру. По ней второй игрок попадёт в тот же счёт.</label>
+        <input class="field" id="gameLink" readonly>
+      </div>
+      <div class="reset" id="resetBox"></div>
+    </div>
+  </details>
+</div>
+
+<div class="toast" id="toast" role="status" hidden><span id="toastMsg"></span><button type="button" id="toastBtn" hidden></button></div>
+
+<script>
+/* Firebase project settings (Project settings → Your apps → Web app). null = the page keeps score only on this device. */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCYZteLqXHeY8rWzYpqriZegEttSdqN1Q0",
+  authDomain: "chistaya-rech.firebaseapp.com",
+  projectId: "chistaya-rech",
+  storageBucket: "chistaya-rech.firebasestorage.app",
+  messagingSenderId: "414908477217",
+  appId: "1:414908477217:web:7224896ddaa9c1b93f1860"
+};
+
+(() => {
+  const LS = 'chistaya-rech-v1';
+  const GKEY = 'chistaya-rech-game';
+  const DAY_NAMES = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+  const DEFAULT_WORDS = ['типа', 'короче', 'как бы', 'блин', 'в принципе', 'на самом деле'];
+  const TIER_NAME = { clean: 'Чистый день', light: 'Лёгкий', medium: 'Средний', heavy: 'Тяжёлый' };
+  const DEBUFFS = {
+    light: [
+      { t: 'Синонимайзер', d: 'Придумать 5 культурных замен пойманному слову.' },
+      { t: 'Третье лицо', d: '15 минут говорить о себе только в третьем лице.' },
+      { t: 'Комплименты', d: 'Сказать партнёру 3 искренних комплимента, ни разу не повторившись.' },
+      { t: 'Скороговорки', d: '3 скороговорки без запинки. Сбились, начинаете заново.' },
+      { t: 'Физкультминутка', d: '15 приседаний или 10 отжиманий.' },
+      { t: 'Бариста', d: 'Приготовить партнёру чай или кофе.' },
+      { t: 'Поклон', d: 'Торжественно извиниться: «Прошу прощения за свою речь, о мудрейший из собеседников».' }
+    ],
+    medium: [
+      { t: 'Шекспир', d: 'Час говорить высоким стилем: «извольте», «сие», «премного благодарен».' },
+      { t: 'Оратор', d: 'Минута рассказа на случайную тему без единого паразита. Сорвались, новая попытка.' },
+      { t: 'Посуда', d: 'Помыть посуду вместо партнёра.' },
+      { t: 'Диджей', d: 'Весь вечер музыку выбирает партнёр.' },
+      { t: 'Шёпот', d: '20 минут говорить только шёпотом.' },
+      { t: 'Голосовое', d: 'Записать партнёру минуту голосового без паразитов. Неудачные дубли отправляются тоже.' }
+    ],
+    heavy: [
+      { t: 'Вкусняшка', d: 'Купить партнёру что-нибудь вкусное.' },
+      { t: 'Кинозал', d: 'Партнёр выбирает фильм, смотреть без комментариев.' },
+      { t: 'Уборка', d: 'Взять на себя одну домашнюю обязанность партнёра.' },
+      { t: 'Желание', d: 'Выполнить одно желание партнёра в разумных рамках.' },
+      { t: 'Позорная история', d: 'Рассказать смешную историю о себе, которую партнёр ещё не слышал.' }
+    ]
+  };
+
+  const defaultCfg = () => ({
+    players: [
+      { id: 'p1', name: 'Игрок 1', words: DEFAULT_WORDS.slice() },
+      { id: 'p2', name: 'Игрок 2', words: DEFAULT_WORDS.slice() }
+    ],
+    cats: { mat: true, parasite: true, filler: true },
+    rate: 0,
+    startedAt: Date.now()
+  });
+  function normCfg(c) {
+    const d = defaultCfg();
+    if (!c || typeof c !== 'object') return d;
+    const players = Array.isArray(c.players) && c.players.length === 2
+      ? c.players.map((p, i) => ({
+          id: d.players[i].id,
+          name: String((p && p.name) || d.players[i].name).slice(0, 40),
+          words: Array.isArray(p && p.words) ? p.words.map(w => String(w).trim().slice(0, 40)).filter(Boolean).slice(0, 20) : d.players[i].words
+        }))
+      : d.players;
+    const cats = Object.assign({}, d.cats, c.cats && typeof c.cats === 'object' ? c.cats : {});
+    return { players, cats, rate: Math.max(0, Number(c.rate) || 0), startedAt: Number(c.startedAt) || d.startedAt };
+  }
+
+  const S = { mode: 'connecting', root: null, gid: null, readonly: false, synced: false, stale: false, cfg: defaultCfg(), cfgSaved: false, events: [], draws: [], sel: 'p1', confirmReset: false };
+
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const pad = n => String(n).padStart(2, '0');
+  const dayKey = ts => { const d = new Date(ts); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+  const todayKey = () => dayKey(Date.now());
+  const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  const player = id => S.cfg.players.find(p => p.id === id) || S.cfg.players[0];
+  const other = id => (id === 'p1' ? 'p2' : 'p1');
+  const pcStyle = id => (id === 'p2' ? '--pc:var(--p2);--pcs:var(--p2-soft)' : '--pc:var(--p1);--pcs:var(--p1-soft)');
+  const eff = e => (e.disputed || e.shielded ? 0 : Number(e.points) || 0);
+  const tierOf = p => (p <= 0 ? 'clean' : p <= 4 ? 'light' : p <= 9 ? 'medium' : 'heavy');
+  const canWrite = () => (S.mode === 'db' || S.mode === 'local') && !S.readonly;
+  function plural(n, a, b, c) { n = Math.abs(n) % 100; const n1 = n % 10; if (n > 10 && n < 20) return c; if (n1 > 1 && n1 < 5) return b; if (n1 === 1) return a; return c; }
+  function labelOf(e) {
+    switch (e.cat) {
+      case 'filler': return 'междометие';
+      case 'parasite': return '«' + (e.word || '') + '»';
+      case 'mat': return 'мат';
+      case 'insult': return 'мат в адрес человека';
+      case 'joker': return 'джокер';
+      case 'false': return 'ложная поимка';
+      default: return e.cat || '';
+    }
+  }
+
+  function pointsOn(pid, key) { let s = 0; for (const e of S.events) if (e.player === pid && dayKey(e.ts) === key) s += eff(e); return s; }
+  function jokerUsed(pid) { const tk = todayKey(); return S.events.some(e => e.player === pid && e.cat === 'joker' && dayKey(e.ts) === tk); }
+  function shieldsOf(pid) {
+    const raw = {};
+    for (const e of S.events) {
+      if (e.player !== pid) continue;
+      const k = dayKey(e.ts);
+      raw[k] = (raw[k] || 0) + (e.disputed ? 0 : Number(e.points) || 0);
+    }
+    const d = new Date(S.cfg.startedAt); d.setHours(12, 0, 0, 0);
+    const tk = todayKey();
+    let clean = 0, guard = 0;
+    while (dayKey(d) < tk && guard < 400) { if (!(raw[dayKey(d)] > 0)) clean++; d.setDate(d.getDate() + 1); guard++; }
+    const used = S.events.filter(e => e.player === pid && e.shielded).length;
+    return Math.max(0, clean - used);
+  }
+  function lastDays(n) { const out = []; for (let i = n - 1; i >= 0; i--) { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - i); out.push(d); } return out; }
+
+  /* ---------- storage ---------- */
+  function lsLoad() {
+    try {
+      const r = JSON.parse(localStorage.getItem(LS) || 'null');
+      if (r) { S.cfg = normCfg(r.cfg); S.cfgSaved = !!r.cfg; S.events = Array.isArray(r.events) ? r.events : []; S.draws = Array.isArray(r.draws) ? r.draws : []; }
+    } catch (_) {}
+  }
+  function lsSave() { try { localStorage.setItem(LS, JSON.stringify({ cfg: S.cfg, events: S.events, draws: S.draws })); } catch (_) {} }
+  function handleErr(e) {
+    const code = e && e.code;
+    if (code === 'permission-denied') toast('Сервер не принял запись. Проверьте ссылку на игру.');
+    else if (code === 'resource-exhausted') toast('Бесплатный лимит базы на сегодня исчерпан. Завтра заработает снова.');
+    else toast('Не получилось сохранить. Проверьте связь и попробуйте ещё раз.');
+    render();
+  }
+  // Firestore queues writes offline and applies them locally at once, so writes are not awaited.
+  function saveCfg() {
+    S.cfgSaved = true;
+    if (S.mode === 'local') { lsSave(); render(); return Promise.resolve(); }
+    if (S.mode !== 'db') return Promise.resolve();
+    const body = JSON.parse(JSON.stringify(S.cfg));
+    S.root.collection('meta').doc('config').set(body).catch(handleErr);
+    render();
+    return Promise.resolve();
+  }
+  async function addDoc(coll, data) {
+    if (!canWrite()) return null;
+    if (S.mode === 'local') { const id = uid(); S[coll].unshift(Object.assign({ id }, data)); S.cfgSaved = true; lsSave(); render(); return id; }
+    if (!S.cfgSaved) saveCfg();
+    const ref = S.root.collection(coll).doc();
+    ref.set(data).catch(handleErr);
+    return ref.id;
+  }
+  async function updateDoc(coll, id, patch) {
+    if (!canWrite()) return false;
+    if (S.mode === 'local') { const x = S[coll].find(r => r.id === id); if (x) Object.assign(x, patch); lsSave(); render(); return true; }
+    S.root.collection(coll).doc(id).update(patch).catch(handleErr);
+    return true;
+  }
+  async function delDoc(coll, id) {
+    if (!canWrite()) return false;
+    if (S.mode === 'local') { S[coll] = S[coll].filter(r => r.id !== id); lsSave(); render(); return true; }
+    S.root.collection(coll).doc(id).delete().catch(handleErr);
+    return true;
+  }
+  const strip = r => { const o = Object.assign({}, r); delete o.id; return o; };
+
+  /* ---------- actions ---------- */
+  async function catchIt(cat, word) {
+    const pid = S.sel, p = player(pid);
+    const pts = cat === 'mat' ? 3 : cat === 'insult' ? 5 : cat === 'joker' ? 0 : 1;
+    const data = { player: pid, cat, points: pts, ts: Date.now() };
+    if (word) data.word = word;
+    const id = await addDoc('events', data);
+    if (!id) return;
+    if (cat === 'joker') toast(p.name + ' использует джокер. Следующий будет завтра.', 'Отменить', () => delDoc('events', id));
+    else toast(p.name + ': ' + labelOf(data) + ' +' + pts + '. Теперь повторите фразу без него.', 'Отменить', () => delDoc('events', id));
+  }
+  async function dispute(id) {
+    const e = S.events.find(x => x.id === id); if (!e) return;
+    if (!(await updateDoc('events', id, { disputed: true }))) return;
+    const catcher = other(e.player);
+    await addDoc('events', { player: catcher, cat: 'false', points: 1, ts: Date.now() });
+    toast('Оспорено. ' + player(catcher).name + ' получает +1 за ложную поимку.');
+  }
+  async function shield(id) {
+    const e = S.events.find(x => x.id === id); if (!e || shieldsOf(e.player) < 1) return;
+    if (await updateDoc('events', id, { shielded: true })) toast('Щит потрачен, очки за эту запись не считаются.', 'Вернуть', () => updateDoc('events', id, { shielded: false }));
+  }
+  async function removeEvent(id) {
+    const e = S.events.find(x => x.id === id); if (!e) return;
+    const copy = strip(e);
+    if (await delDoc('events', id)) toast('Запись удалена.', 'Вернуть', () => addDoc('events', copy));
+  }
+  async function drawDebuff(pid) {
+    const pts = pointsOn(pid, todayKey()); const tier = tierOf(pts);
+    if (tier === 'clean') return;
+    const list = DEBUFFS[tier];
+    const last = S.draws.find(d => d.player === pid && d.tier === tier);
+    let pool = list.filter(x => !last || x.t !== last.title); if (!pool.length) pool = list;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    await addDoc('draws', { player: pid, tier, title: pick.t, text: pick.d, points: pts, ts: Date.now(), done: false });
+  }
+  async function resetAll() {
+    S.confirmReset = false;
+    const evs = S.events.slice(), drs = S.draws.slice();
+    for (const e of evs) await delDoc('events', e.id);
+    for (const d of drs) await delDoc('draws', d.id);
+    S.cfg.startedAt = Date.now();
+    await saveCfg();
+    toast('Счёт обнулён. Игра начинается с сегодняшнего дня.');
+  }
+
+  /* ---------- toast ---------- */
+  let toastTimer;
+  function toast(msg, actLabel, actFn) {
+    const t = $('toast'), b = $('toastBtn');
+    $('toastMsg').textContent = msg;
+    if (actLabel) { b.hidden = false; b.textContent = actLabel; b.onclick = () => { t.hidden = true; actFn(); }; }
+    else { b.hidden = true; b.onclick = null; }
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 6000);
+  }
+
+  /* ---------- render ---------- */
+  function render() {
+    const tk = todayKey();
+    const dis = canWrite() ? '' : ' disabled';
+
+    $('today').textContent = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+    const st = $('status'); let txt, dot;
+    if (S.mode === 'connecting') { txt = 'Подключение…'; dot = 'var(--muted)'; }
+    else if (S.mode === 'local') { txt = 'Только на этом устройстве'; dot = 'var(--warn)'; }
+    else if (S.stale) { txt = 'Офлайн, синхронизируется позже'; dot = 'var(--warn)'; }
+    else if (!S.synced) { txt = 'Загрузка…'; dot = 'var(--muted)'; }
+    else { txt = 'Общий счёт · онлайн'; dot = 'var(--ok)'; }
+    st.textContent = txt; st.style.setProperty('--dot', dot);
+
+    const note = $('modeNote');
+    if (S.mode === 'local') { note.hidden = false; note.textContent = 'Нет связи с сервером, поэтому счёт сохраняется только в этом браузере.'; }
+    else note.hidden = true;
+    $('inviteBtn').hidden = S.mode !== 'db';
+    $('linkBox').hidden = S.mode !== 'db';
+    if (S.mode === 'db') $('gameLink').value = gameUrl();
+
+    // scoreboard
+    const days7 = lastDays(7).map(dayKey);
+    $('board').innerHTML = S.cfg.players.map(p => {
+      const pts = pointsOn(p.id, tk), t = tierOf(pts);
+      const wk = days7.reduce((s, k) => s + pointsOn(p.id, k), 0);
+      return '<button class="card" type="button" data-act="sel" data-p="' + p.id + '" aria-pressed="' + (S.sel === p.id) + '" style="' + pcStyle(p.id) + '">' +
+        '<span class="name">' + esc(p.name) + '</span>' +
+        '<span class="score"><b>' + pts + '</b><span>' + plural(pts, 'очко', 'очка', 'очков') + ' сегодня</span></span>' +
+        '<span class="chip t-' + t + '">' + TIER_NAME[t] + '</span>' +
+        '<span class="facts">Щиты: ' + shieldsOf(p.id) + ' · джокер: ' + (jokerUsed(p.id) ? 'потрачен' : 'есть') + '</span>' +
+        '<span class="facts">За 7 дней: ' + wk + '</span></button>';
+    }).join('');
+
+    // catch pad
+    const sp = player(S.sel), c = S.cfg.cats;
+    $('catchPanel').setAttribute('style', pcStyle(S.sel));
+    $('who').textContent = sp.name;
+    let cats = '';
+    if (c.filler) cats += '<button class="cat" type="button" data-act="cat" data-cat="filler"' + dis + '>Э-э, м-м<span class="pts">+1</span></button>';
+    if (c.mat) {
+      cats += '<button class="cat mat" type="button" data-act="cat" data-cat="mat"' + dis + '>Мат<span class="pts">+3</span></button>';
+      cats += '<button class="cat insult" type="button" data-act="cat" data-cat="insult"' + dis + '>Мат в адрес<span class="pts">+5</span></button>';
+      const ju = jokerUsed(S.sel);
+      cats += '<button class="cat joker" type="button" data-act="cat" data-cat="joker"' + (ju || !canWrite() ? ' disabled' : '') + '>' + (ju ? 'Джокер потрачен' : 'Джокер: бесплатно') + '<span class="pts">0</span></button>';
+    }
+    $('cats').innerHTML = cats || '<p class="muted">Все категории выключены. Включите нужные в настройках внизу.</p>';
+    $('cats').hidden = false;
+    $('wordsBox').hidden = !c.parasite;
+    $('words').innerHTML = sp.words.length
+      ? sp.words.map(w => '<button class="word" type="button" data-act="word" data-word="' + esc(w) + '"' + dis + '>' + esc(w) + '<b>+1</b></button>').join('')
+      : '<span class="muted small">Стоп-лист пуст. Добавьте слова в настройках.</span>';
+    $('otherWord').disabled = !canWrite(); $('otherBtn').disabled = !canWrite();
+
+    // today's log
+    const evs = S.events.filter(e => dayKey(e.ts) === tk).sort((a, b) => b.ts - a.ts);
+    $('feed').innerHTML = evs.length ? evs.map(e => {
+      const v = e.disputed || e.shielded, tm = new Date(e.ts);
+      let acts = '';
+      if (canWrite()) {
+        if (!v && e.points > 0 && e.cat !== 'false') acts += '<button class="lnk" type="button" data-act="dispute" data-id="' + esc(e.id) + '">Оспорить</button>';
+        if (!v && e.points > 0 && shieldsOf(e.player) > 0) acts += '<button class="lnk" type="button" data-act="shield" data-id="' + esc(e.id) + '">Закрыть щитом</button>';
+        acts += '<button class="lnk danger" type="button" data-act="del" data-id="' + esc(e.id) + '">Удалить</button>';
+      }
+      return '<li class="' + (v ? 'void' : '') + '" style="' + pcStyle(e.player) + '">' +
+        '<span class="time">' + pad(tm.getHours()) + ':' + pad(tm.getMinutes()) + '</span>' +
+        '<span class="what"><span class="who">' + esc(player(e.player).name) + '</span><span class="label">' + esc(labelOf(e)) + '</span>' +
+        (e.disputed ? '<span class="flag">оспорено</span>' : '') + (e.shielded ? '<span class="flag">закрыто щитом</span>' : '') + '</span>' +
+        '<span class="plus">' + (e.points > 0 ? '+' + e.points : '0') + '</span>' +
+        (acts ? '<span class="acts">' + acts + '</span>' : '') + '</li>';
+    }).join('') : '<li class="empty">Сегодня пока ни одного «бипа». Услышали слово: выберите, кто оговорился, и нажмите кнопку выше.</li>';
+
+    // evening summary
+    $('summary').innerHTML = S.cfg.players.map(p => {
+      const pts = pointsOn(p.id, tk), t = tierOf(pts);
+      const d = S.draws.find(x => x.player === p.id && dayKey(x.ts) === tk);
+      let body;
+      if (d) {
+        body = '<div class="draw t-' + esc(d.tier) + (d.done ? ' done' : '') + '"><span class="dt">' + esc(d.title) + '</span><p>' + esc(d.text) + '</p>' +
+          '<div class="drow"><label><input type="checkbox" data-act="done" data-id="' + esc(d.id) + '"' + (d.done ? ' checked' : '') + dis + '> Выполнено</label>' +
+          (canWrite() ? '<button class="lnk" type="button" data-act="undraw" data-id="' + esc(d.id) + '">Убрать</button>' : '') + '</div></div>';
+      } else if (t === 'clean') {
+        body = '<p class="muted small">Ноль очков. Если так останется до полуночи, завтра будет +1 щит.</p>';
+      } else {
+        body = '<button class="btn" type="button" data-act="draw" data-p="' + p.id + '"' + dis + '>Тянуть дебафф: ' + TIER_NAME[t].toLowerCase() + '</button>' +
+          '<p class="muted small">Лучше тянуть вечером, когда счёт за день закрыт.</p>';
+      }
+      return '<div class="sumrow" style="' + pcStyle(p.id) + '"><div class="sumhead"><span class="name">' + esc(p.name) + '</span>' +
+        '<span class="chip t-' + t + '">' + TIER_NAME[t] + ' · ' + pts + ' ' + plural(pts, 'очко', 'очка', 'очков') + '</span></div>' + body + '</div>';
+    }).join('');
+
+    // week
+    const days = lastDays(7), startK = dayKey(S.cfg.startedAt);
+    let tbl = '<thead><tr><th></th>' + days.map(d => '<th class="' + (dayKey(d) === tk ? 'today' : '') + '">' + DAY_NAMES[d.getDay()] + '<br>' + d.getDate() + '</th>').join('') + '</tr></thead><tbody>';
+    for (const p of S.cfg.players) {
+      tbl += '<tr style="' + pcStyle(p.id) + '"><th class="pn" scope="row">' + esc(p.name) + '</th>';
+      for (const d of days) {
+        const k = dayKey(d);
+        if (k < startK) { tbl += '<td class="na">·</td>'; continue; }
+        const pts = pointsOn(p.id, k);
+        tbl += '<td class="t-' + tierOf(pts) + '">' + (pts === 0 ? '✓' : pts) + '</td>';
+      }
+      tbl += '</tr>';
+    }
+    $('week').innerHTML = tbl + '</tbody>';
+
+    let stats = S.cfg.players.map(p => {
+      const counts = {};
+      for (const e of S.events) {
+        if (e.player !== p.id || e.disputed) continue;
+        const key = e.cat === 'parasite' ? (e.word || '').toLowerCase() : e.cat === 'mat' || e.cat === 'insult' ? 'мат' : e.cat === 'filler' ? 'э-э' : null;
+        if (key) counts[key] = (counts[key] || 0) + 1;
+      }
+      const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([w, n]) => esc(w) + ' ×' + n).join(', ');
+      return '<p><b>' + esc(p.name) + '</b> · чаще всего: ' + (top || 'пока ничего') + '</p>';
+    }).join('');
+    if (S.cfg.rate > 0) {
+      const totals = S.cfg.players.map(p => S.events.reduce((s, e) => s + (e.player === p.id ? eff(e) : 0), 0) * S.cfg.rate);
+      stats += '<p><b>Копилка</b> · ' + S.cfg.players.map((p, i) => esc(p.name) + ' ' + totals[i] + ' ₽').join(' · ') + ' · всего ' + (totals[0] + totals[1]) + ' ₽</p>';
+    }
+    $('stats').innerHTML = stats;
+
+    // settings
+    const setVal = (id, v) => { const el = $(id); if (document.activeElement !== el) el.value = v; el.disabled = !canWrite(); };
+    const setChk = (id, v) => { const el = $(id); el.checked = !!v; el.disabled = !canWrite(); };
+    for (const p of S.cfg.players) { setVal('name_' + p.id, p.name); setVal('words_' + p.id, p.words.join(', ')); }
+    setChk('cat_mat', c.mat); setChk('cat_parasite', c.parasite); setChk('cat_filler', c.filler);
+    setVal('rate', String(S.cfg.rate));
+    $('resetBox').innerHTML = !canWrite() ? '' : S.confirmReset
+      ? '<span>Удалить все записи и дебаффы у обоих игроков? Это нельзя отменить.</span><button class="btn danger" type="button" data-act="resetYes">Да, обнулить</button><button class="lnk" type="button" data-act="resetNo">Отмена</button>'
+      : '<button class="lnk danger" type="button" data-act="reset">Обнулить весь счёт</button>';
+  }
+
+  /* ---------- events ---------- */
+  document.addEventListener('click', ev => {
+    const el = ev.target.closest('[data-act]');
+    if (!el || el.tagName === 'INPUT') return;
+    const a = el.dataset.act;
+    if (a === 'sel') { S.sel = el.dataset.p; render(); return; }
+    if (!canWrite()) return;
+    if (a === 'cat') catchIt(el.dataset.cat);
+    else if (a === 'word') catchIt('parasite', el.dataset.word);
+    else if (a === 'dispute') dispute(el.dataset.id);
+    else if (a === 'shield') shield(el.dataset.id);
+    else if (a === 'del') removeEvent(el.dataset.id);
+    else if (a === 'draw') drawDebuff(el.dataset.p);
+    else if (a === 'undraw') delDoc('draws', el.dataset.id);
+    else if (a === 'reset') { S.confirmReset = true; render(); }
+    else if (a === 'resetNo') { S.confirmReset = false; render(); }
+    else if (a === 'resetYes') resetAll();
+  });
+  document.addEventListener('change', ev => {
+    const el = ev.target;
+    if (el.dataset && el.dataset.act === 'done') { updateDoc('draws', el.dataset.id, { done: el.checked }); return; }
+    if (!canWrite() || !el.id) return;
+    const id = el.id;
+    if (id.startsWith('name_')) { const p = player(id.slice(5)); p.name = el.value.trim().slice(0, 40) || (p.id === 'p1' ? 'Игрок 1' : 'Игрок 2'); saveCfg(); }
+    else if (id.startsWith('words_')) { player(id.slice(6)).words = el.value.split(/[,\n]/).map(w => w.trim().slice(0, 40)).filter(Boolean).slice(0, 20); saveCfg(); }
+    else if (id.startsWith('cat_')) { S.cfg.cats[id.slice(4)] = el.checked; saveCfg(); }
+    else if (id === 'rate') { S.cfg.rate = Math.max(0, Math.round(Number(el.value) || 0)); saveCfg(); }
+  });
+  $('otherForm').addEventListener('submit', ev => {
+    ev.preventDefault();
+    const inp = $('otherWord'), w = inp.value.trim().slice(0, 40);
+    if (!w || !canWrite()) return;
+    inp.value = '';
+    catchIt('parasite', w);
+  });
+
+  /* ---------- boot ---------- */
+  function goLocal() { S.mode = 'local'; lsLoad(); render(); }
+  /* ---------- game link ---------- */
+  const hashId = () => { const m = location.hash.match(/g=([A-Za-z0-9]{20,40})/); return m ? m[1] : null; };
+  function randId(n) {
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    const a = new Uint32Array(n); crypto.getRandomValues(a);
+    return Array.from(a, x => abc[x % abc.length]).join('');
+  }
+  function gameId() {
+    let id = hashId();
+    if (!id) { try { id = localStorage.getItem(GKEY); } catch (_) {} }
+    if (!id || !/^[A-Za-z0-9]{20,40}$/.test(id)) id = randId(24);
+    try { localStorage.setItem(GKEY, id); } catch (_) {}
+    if (hashId() !== id) history.replaceState(null, '', '#g=' + id);
+    return id;
+  }
+  const gameUrl = () => location.origin + location.pathname + '#g=' + S.gid;
+  async function invite() {
+    const url = gameUrl();
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Чистая речь', text: 'Наш общий счёт в игре «Чистая речь»', url }); return; }
+      catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    try { await navigator.clipboard.writeText(url); toast('Ссылка скопирована. Отправьте её второму игроку.'); }
+    catch (_) { $('settings').open = true; const i = $('gameLink'); i.focus(); i.select(); toast('Скопируйте ссылку из поля в настройках.'); }
+  }
+  $('inviteBtn').addEventListener('click', invite);
+  $('gameLink').addEventListener('focus', ev => ev.target.select());
+  window.addEventListener('hashchange', () => {
+    const id = hashId();
+    if (S.mode === 'db' && id && id !== S.gid) { try { localStorage.setItem(GKEY, id); } catch (_) {} location.reload(); }
+  });
+
+  async function boot() {
+    render();
+    if (!FIREBASE_CONFIG || !window.firebase) { goLocal(); return; }
+    let fs;
+    try {
+      firebase.initializeApp(FIREBASE_CONFIG);
+      fs = firebase.firestore();
+      try { await fs.enablePersistence({ synchronizeTabs: true }); } catch (_) {}
+    } catch (_) { goLocal(); return; }
+    S.gid = gameId();
+    S.root = fs.collection('games').doc(S.gid);
+    S.mode = 'db';
+    const timer = setTimeout(() => { if (!S.synced) { S.stale = true; render(); } }, 10000);
+    const onErr = e => { clearTimeout(timer); S.stale = true; if (e && e.code === 'permission-denied') toast('Сервер не пускает в эту игру. Проверьте ссылку.'); render(); };
+    S.root.collection('meta').doc('config').onSnapshot(s => { if (s.exists) { S.cfg = normCfg(s.data()); S.cfgSaved = true; } render(); }, onErr);
+    S.root.collection('events').orderBy('ts', 'desc').limit(1000).onSnapshot({ includeMetadataChanges: true }, q => {
+      S.events = q.docs.map(d => Object.assign({}, d.data(), { id: d.id }));
+      if (!q.metadata.fromCache) { S.synced = true; S.stale = false; clearTimeout(timer); }
+      render();
+    }, onErr);
+    S.root.collection('draws').orderBy('ts', 'desc').limit(300).onSnapshot(q => {
+      S.draws = q.docs.map(d => Object.assign({}, d.data(), { id: d.id }));
+      render();
+    }, onErr);
+    render();
+  }
+  let lastKey = todayKey();
+  setInterval(() => { if (todayKey() !== lastKey) { lastKey = todayKey(); render(); } }, 60000);
+  boot();
+})();
+</script>
+</body>
+</html>
